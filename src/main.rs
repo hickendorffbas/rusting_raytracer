@@ -1,4 +1,9 @@
+use std::vec;
+
 use image::{DynamicImage, Rgba, GenericImage};
+
+mod math;
+use math::{V3, VectorMath, clamp, max, min};
 
 
 //Settings:
@@ -9,7 +14,7 @@ const FOCAL_LENGTH:f64 = 10.0;
 const CAMERA_POSITION:Point = Point { x: 0.0, y: 0.0, z: -FOCAL_LENGTH };
 const VIEW_PORT_WIDTH:f64 = 4.0; 
 const FADE_DISTANCE_START:f64 = 100.0;
-const FADE_DISTANCE_END:f64 = 400.0;
+const FADE_DISTANCE_END:f64 = 300.0;
 const SPECULAR_REFLECTION_CONSTANT:f64 = 0.2;
 const DIFFUSE_REFLECTION_CONSTANT:f64 = 0.5;
 const AMBIENT_REFLECTION_CONSTANT:f64 = 0.3;
@@ -52,65 +57,9 @@ const COLOR_BROWN:Color = Color {r: 139.0, g: 69.0, b: 19.0};
 const COLOR_WHITE:Color = Color {r: 255.0, g: 255.0, b: 255.0};
 
 
-trait VectorMath {
-    fn add(&self, other: &V3) -> V3;
-    fn subtract(&self, other: &V3) -> V3;
-    fn multiply(&self, amount: f64) -> V3;
-    fn dot(&self, other: &V3) -> f64;
-    fn cross(&self, other: &V3) -> V3;
-    fn length(&self) -> f64;
-    fn normalize(&self) -> V3;
-}
-
 trait Intersectable {
     fn intersect(&self, ray: &Ray) -> Option<Hit>;
 }
-
-#[derive(Clone)]
-struct V3 {
-    x: f64,
-    y: f64,
-    z: f64,
-}
-
-impl VectorMath for V3 {
-    fn add(&self, other: &V3) -> V3 {
-        return V3 { x: self.x + other.x, y: self.y + other.y, z: self.z + other.z };
-    }
-
-    fn subtract(&self, other: &V3) -> V3 {
-        return V3 { x: self.x - other.x, y: self.y - other.y, z: self.z - other.z };
-    }
-
-    fn multiply(&self, amount: f64) -> V3 {
-        return V3 { x: self.x * amount, y: self.y * amount, z: self.z * amount };
-    }
-
-    fn dot(&self, other: &V3) -> f64 {
-        return self.x * other.x + self.y * other.y + self.z * other.z;
-    }
-
-    fn cross(&self, other: &V3) -> V3 {
-        return V3 {
-            x: (self.y * other.z) - (self.z * other.y),
-            y: (self.z * other.x) - (self.x * other.z),
-            z: (self.x * other.y) - (self.y * other.x),
-        }
-    }
-
-    fn length(&self) -> f64 {
-        let squared_length = self.x * self.x + self.y * self.y + self.z * self.z;
-        return squared_length.sqrt();
-    }
-
-    fn normalize(&self) -> V3 {
-        let length = self.length();
-        return V3 { x: self.x / length,
-                    y: self.y / length,
-                    z: self.z / length };
-    }
-}
-
 
 #[derive(Clone)]
 struct Color {
@@ -119,6 +68,13 @@ struct Color {
     b: f64,
 }
 
+fn color_as_v3(color: &Color) -> V3 {
+    return V3 { x: color.r, y: color.g, z: color.b }
+}
+
+fn v3_as_color(vector: &V3) -> Color {
+    return Color {r: vector.x, g: vector.y, b: vector.z}
+}
 
 type Point = V3;
 type Direction = V3;
@@ -186,28 +142,8 @@ impl Intersectable for Sphere {
     }
 }
 
-//TODO: move these and other math stuff to a math.rs
-fn min(a:f64, b:f64, c:f64) -> f64 {
-    if a < b && a < c {
-        return a;
-    }
-    return if b < c { b } else { c };
-}
-
-fn max(a:f64, b:f64, c:f64) -> f64 {
-    if a > b && a > c {
-        return a;
-    }
-    return if b > c { b } else { c };
-}
-
-fn clamp(value:f64, min:f64, max:f64) -> f64 {
-    if value > max { return max; }
-    if value < min { return min; }
-    return value;
-}
-
-fn points_are_on_same_side_of_ray(point_to_test_1: &Point, point_to_test_2: &Point, line_start_point: &Point, line_end_point: &Point) -> bool {
+fn points_are_on_same_side_of_ray(point_to_test_1: &Point, point_to_test_2: &Point,
+                                  line_start_point: &Point, line_end_point: &Point) -> bool {
 
     let boundary_vec = line_start_point.subtract(&line_end_point);
     let point_1_vec = boundary_vec.cross(&point_to_test_1.subtract(&line_end_point));
@@ -216,7 +152,6 @@ fn points_are_on_same_side_of_ray(point_to_test_1: &Point, point_to_test_2: &Poi
 
     return c > 0.0;
 }
-
 
 impl Intersectable for Triangle {
     fn intersect(&self, ray: &Ray) -> Option<Hit> {
@@ -269,19 +204,12 @@ impl Intersectable for Triangle {
 }
 
 fn color_blend(color1: Color, color2: Color, color2_ratio: f64) -> Color {
-    //TODO: for now just an average, does this need to be smarter?
-
-    let color1_ratio = 1.0 - color2_ratio;
-    return Color{r: color1.r * color1_ratio + color2.r * color2_ratio,
-                 g: color1.g * color1_ratio + color2.g * color2_ratio,
-                 b: color1.b * color1_ratio + color2.b * color2_ratio};
+    return v3_as_color(&color_as_v3(&color1).lerp(&color_as_v3(&color2), color2_ratio));
 }
-
 
 fn ray_through_points(start: Point, end: Point) -> Ray {
     return Ray { direction: end.subtract(&start).normalize(), origin: start }
 }
-
 
 fn get_color_for_hitpoint(hit: Hit) -> Color {
 
@@ -300,7 +228,8 @@ fn get_color_for_hitpoint(hit: Hit) -> Color {
     };
 
     let result_color = if hit.distance > FADE_DISTANCE_START {
-        color_blend(computed_color, COLOR_BLACK, clamp((hit.distance - FADE_DISTANCE_START) / (FADE_DISTANCE_END - FADE_DISTANCE_START), 0.0, 1.0))
+        color_blend(computed_color, COLOR_BLACK,
+                    clamp((hit.distance - FADE_DISTANCE_START) / (FADE_DISTANCE_END - FADE_DISTANCE_START), 0.0, 1.0))
     } else {
         computed_color
     };
@@ -377,7 +306,9 @@ fn main() {
         for view_port_pixel_y in 0..IMG_HEIGHT_PX {
             let view_port_coordinate_y = (PIX_SIZE_Y * view_port_pixel_y as f64) + VIEW_PORT_TOP_LEFT.y;
 
-            let view_port_point = Point { x: view_port_coordinate_x.into(), y: view_port_coordinate_y.into(), z: CAMERA_POSITION.z + FOCAL_LENGTH };
+            let view_port_point = Point { x: view_port_coordinate_x.into(),
+                                          y: view_port_coordinate_y.into(),
+                                          z: CAMERA_POSITION.z + FOCAL_LENGTH };
             let ray = ray_through_points(CAMERA_POSITION, view_port_point);
 
             let color = send_ray(&scene, &ray);
