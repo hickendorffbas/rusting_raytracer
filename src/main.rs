@@ -1,14 +1,28 @@
 use image::{DynamicImage, Rgba, GenericImage};
 
 
-
 //Settings:
+//TODO: I think we need a scene struct and output settings struct or something like that to organise this better.
 const IMG_WIDTH_PX:u32 = 2500;
 const IMG_HEIGHT_PX:u32 = 2500;
 const FOCAL_LENGTH:f64 = 10.0;
 const CAMERA_POSITION:Point = Point { x: 0.0, y: 0.0, z: -FOCAL_LENGTH };
 const VIEW_PORT_WIDTH:f64 = 4.0; 
+const FADE_DISTANCE_START:f64 = 100.0;
+const FADE_DISTANCE_END:f64 = 400.0;
+const SPECULAR_REFLECTION_CONSTANT:f64 = 0.2;
+const DIFFUSE_REFLECTION_CONSTANT:f64 = 0.5;
+const AMBIENT_REFLECTION_CONSTANT:f64 = 0.3;
+const MATERIAL_SHININESS_CONSTANT:f64 = 0.1; //TODO: should be per material, not global
+const COLOR_MODE:ColorMode = ColorMode::NORMALS;
 
+
+
+enum ColorMode {
+    STATIC_COLOR,
+    NORMALS,
+    LIGHT
+}
 
 
 const VIEW_PORT_HEIGHT:f64 = (IMG_HEIGHT_PX as f64 / IMG_WIDTH_PX as f64) * VIEW_PORT_WIDTH;
@@ -27,16 +41,15 @@ const PIX_X_Y_RATIO_IS_SANE:bool = PIX_SIZE_X - PIX_SIZE_Y < 0.001 && PIX_SIZE_X
 const _: () = check_viewport_is_sane();
 
 
-
-const COLOR_BLACK:Color = Color {r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
-const COLOR_RED:Color = Color {r: 255.0, g: 0.0, b: 0.0, a: 0.0 };
-const COLOR_GREEN:Color = Color {r: 0.0, g: 255.0, b: 0.0, a: 0.0 };
-const COLOR_BLUE:Color = Color {r: 0.0, g: 0.0, b: 255.0, a: 0.0 };
-const COLOR_PURPLE:Color = Color {r: 255.0, g: 0.0, b: 255.0, a: 0.0 };
-const COLOR_YELLOW:Color = Color {r: 255.0, g: 255.0, b: 0.0, a: 0.0 };
-const COLOR_GRAY:Color = Color {r: 120.0, g: 120.0, b: 120.0, a: 0.0 };
-const COLOR_BROWN:Color = Color {r: 139.0, g: 69.0, b: 19.0, a: 0.0 };
-
+const COLOR_BLACK:Color = Color {r: 0.0, g: 0.0, b: 0.0};
+const COLOR_RED:Color = Color {r: 255.0, g: 0.0, b: 0.0};
+const COLOR_GREEN:Color = Color {r: 0.0, g: 255.0, b: 0.0};
+const COLOR_BLUE:Color = Color {r: 0.0, g: 0.0, b: 255.0};
+const COLOR_PURPLE:Color = Color {r: 255.0, g: 0.0, b: 255.0};
+const COLOR_YELLOW:Color = Color {r: 255.0, g: 255.0, b: 0.0};
+const COLOR_GRAY:Color = Color {r: 120.0, g: 120.0, b: 120.0};
+const COLOR_BROWN:Color = Color {r: 139.0, g: 69.0, b: 19.0};
+const COLOR_WHITE:Color = Color {r: 255.0, g: 255.0, b: 255.0};
 
 
 trait VectorMath {
@@ -46,6 +59,7 @@ trait VectorMath {
     fn dot(&self, other: &V3) -> f64;
     fn cross(&self, other: &V3) -> V3;
     fn length(&self) -> f64;
+    fn normalize(&self) -> V3;
 }
 
 trait Intersectable {
@@ -88,6 +102,13 @@ impl VectorMath for V3 {
         let squared_length = self.x * self.x + self.y * self.y + self.z * self.z;
         return squared_length.sqrt();
     }
+
+    fn normalize(&self) -> V3 {
+        let length = self.length();
+        return V3 { x: self.x / length,
+                    y: self.y / length,
+                    z: self.z / length };
+    }
 }
 
 
@@ -96,7 +117,6 @@ struct Color {
     r: f64,
     g: f64,
     b: f64,
-    a: f64,
 }
 
 
@@ -121,15 +141,23 @@ struct Triangle {
     color: Color,
 }
 
+struct Light {
+    position: Point,
+    color: Color
+}
+
+
 struct Hit {
     point: Point,
-    color: Color,
+    material_color: Color,
     distance: f64,
+    surface_normal: Direction,
 }
 
 enum Object {
     SphereObject(Sphere),
-    TriangleObject(Triangle)
+    TriangleObject(Triangle),
+    LightObject(Light),
 }
 
 
@@ -142,7 +170,6 @@ impl Intersectable for Sphere {
         let c = origin_to_center.dot(&origin_to_center) - self.radius * self.radius;
 
         let discriminant = b * b - 4.0 * a * c;
-
         if discriminant < 0.0 {
             return None;
         }
@@ -153,10 +180,13 @@ impl Intersectable for Sphere {
         let intersection = ray.origin.add(&ray.direction.multiply(closest_solution));
         let distance = intersection.subtract(&ray.origin).length();
 
-        return Some( Hit { point: intersection, color: self.color.clone(), distance: distance } );
+        let normal = intersection.subtract(&self.center).normalize();
+
+        return Some( Hit { point: intersection, material_color: self.color.clone(), distance: distance, surface_normal: normal } );
     }
 }
 
+//TODO: move these and other math stuff to a math.rs
 fn min(a:f64, b:f64, c:f64) -> f64 {
     if a < b && a < c {
         return a;
@@ -230,9 +260,10 @@ impl Intersectable for Triangle {
         if !points_are_on_same_side_of_ray(&intersection, &self.p3, &self.p1, &self.p2) { return None }
 
         return Some(Hit {
-            color: self.color.clone(),
+            material_color: self.color.clone(),
             distance: intersection.subtract(&ray.origin).length(),
             point: intersection,
+            surface_normal: normal.normalize(),
         });
     }
 }
@@ -243,60 +274,67 @@ fn color_blend(color1: Color, color2: Color, color2_ratio: f64) -> Color {
     let color1_ratio = 1.0 - color2_ratio;
     return Color{r: color1.r * color1_ratio + color2.r * color2_ratio,
                  g: color1.g * color1_ratio + color2.g * color2_ratio,
-                 b: color1.b * color1_ratio + color2.b * color2_ratio,
-                 a: 0.0}; //TODO: do we ever care about the alpha, or should we remove that from our color?
+                 b: color1.b * color1_ratio + color2.b * color2_ratio};
 }
+
 
 fn ray_through_points(start: Point, end: Point) -> Ray {
-    let full_direction = end.subtract(&start);
-    let length = full_direction.length();
-    let normalized_direction = Direction { x: full_direction.x / length, 
-                                           y: full_direction.y / length, 
-                                           z: full_direction.z / length };
-
-    return Ray { direction: normalized_direction, origin: start }
+    return Ray { direction: end.subtract(&start).normalize(), origin: start }
 }
 
 
-//TODO: move to scene settings (I think we need a scene struct actually)
-const FADE_DISTANCE_START:f64 = 100.0;
-const FADE_DISTANCE_END:f64 = 400.0;
+fn get_color_for_hitpoint(hit: Hit) -> Color {
+
+    let computed_color = match COLOR_MODE {
+        ColorMode::STATIC_COLOR => {
+            COLOR_RED
+        },
+        ColorMode::NORMALS => {
+            Color {r: (hit.surface_normal.x + 1.0) * 127.5,
+                   g: (hit.surface_normal.y + 1.0)  * 127.5,
+                   b: (hit.surface_normal.z + 1.0)  * 127.5}
+        },
+        ColorMode::LIGHT => {
+            todo!();
+        }
+    };
+
+    let result_color = if hit.distance > FADE_DISTANCE_START {
+        color_blend(computed_color, COLOR_BLACK, clamp((hit.distance - FADE_DISTANCE_START) / (FADE_DISTANCE_END - FADE_DISTANCE_START), 0.0, 1.0))
+    } else {
+        computed_color
+    };
+
+    return result_color;
+}
 
 
-fn find_first_intersection_of_ray(scene: &Vec<Object>, ray: &Ray) -> Color {
-
-    let mut hit_found = false;
+fn send_ray(scene: &Vec<Object>, ray: &Ray) -> Color {
     let mut closest_hit_distance = std::f64::MAX;
-    let mut hit_color : Option<Color> = Option::None;
+    let mut closest_hit:Option<Hit> = None;
+
     for obj in scene.iter() {
         let opt_hit: Option<Hit> = match obj {
             Object::SphereObject(x) => { x.intersect(&ray) }
             Object::TriangleObject(x) => { x.intersect(&ray) }
+            Object::LightObject(_) => { None }
         };
 
         match opt_hit {
             Some(hit) => {
                 if hit.distance < closest_hit_distance {
                     closest_hit_distance = hit.distance;
-                    hit_found = true;
-                    let result_color = if hit.distance > FADE_DISTANCE_START {
-                        println!("hit dist: {}", hit.distance);
-                        color_blend(hit.color, COLOR_BLACK, clamp((hit.distance - FADE_DISTANCE_START) / (FADE_DISTANCE_END - FADE_DISTANCE_START), 0.0, 1.0))
-                    } else {
-                        hit.color
-                    };
-                    hit_color = Option::Some(result_color);
+                    closest_hit = Some(hit);
                 }
             },
             _ => {}
         }
     }
 
-    if hit_found {
-        return hit_color.unwrap();
-    }
-
-    return COLOR_BLACK;
+    return match closest_hit {
+        Some(hit) => get_color_for_hitpoint(hit),
+        _ =>  COLOR_BLACK
+    };
 }
 
 
@@ -309,6 +347,21 @@ fn main() {
         Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 210.0 }, radius: 5.0, color: COLOR_GREEN }),
         Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 240.0 }, radius: 5.0, color: COLOR_RED }),
         Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 270.0 }, radius: 5.0, color: COLOR_GREEN }),
+
+        Object::TriangleObject(Triangle {p1: Point {x: -10.0, y: -15.0, z: 151.0},
+                                         p2: Point {x: -15.0, y: -15.0, z: 150.0},
+                                         p3: Point {x: -15.0, y: -10.0, z: 150.0}, color: COLOR_BROWN}),
+
+        Object::TriangleObject(Triangle {p1: Point {x: -10.0, y: 0.0, z: 150.0},
+                                         p2: Point {x: -15.0, y: 0.0, z: 250.0},
+                                         p3: Point {x: -15.0, y: 5.0, z: 250.0}, color: COLOR_BROWN}),
+
+        Object::TriangleObject(Triangle {p1: Point {x: -10.0, y: 10.0, z: 150.0},
+                                         p2: Point {x: -15.0, y: 10.0, z: 151.0},
+                                         p3: Point {x: -15.0, y: 15.0, z: 150.0}, color: COLOR_BROWN}),
+
+
+        Object::LightObject(Light {color: COLOR_WHITE, position: Point { x: 30.0, y: 30.0, z: 0.0 }}),
     ];
 
 
@@ -327,9 +380,8 @@ fn main() {
             let view_port_point = Point { x: view_port_coordinate_x.into(), y: view_port_coordinate_y.into(), z: CAMERA_POSITION.z + FOCAL_LENGTH };
             let ray = ray_through_points(CAMERA_POSITION, view_port_point);
 
-            let color = find_first_intersection_of_ray(&scene, &ray);
-
-            let img_color = Rgba([color.r as u8, color.g as u8, color.b as u8, color.a as u8]); //TODO: conversion needs to be better (clamp etc.)
+            let color = send_ray(&scene, &ray);
+            let img_color = Rgba([color.r as u8, color.g as u8, color.b as u8, 0]);
             img.put_pixel(view_port_pixel_x, view_port_pixel_y, img_color);
         } 
     }
