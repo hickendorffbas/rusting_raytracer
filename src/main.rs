@@ -13,20 +13,20 @@ const IMG_HEIGHT_PX:u32 = 2500;
 const FOCAL_LENGTH:f64 = 10.0;
 const CAMERA_POSITION:Point = Point { x: 0.0, y: 0.0, z: -FOCAL_LENGTH };
 const VIEW_PORT_WIDTH:f64 = 4.0; 
-const FADE_DISTANCE_START:f64 = 100.0;
-const FADE_DISTANCE_END:f64 = 300.0;
-const SPECULAR_REFLECTION_CONSTANT:f64 = 0.2;
-const DIFFUSE_REFLECTION_CONSTANT:f64 = 0.5;
-const AMBIENT_REFLECTION_CONSTANT:f64 = 0.3;
-const MATERIAL_SHININESS_CONSTANT:f64 = 0.1; //TODO: should be per material, not global
-const COLOR_MODE:ColorMode = ColorMode::NORMALS;
+const FADE_DISTANCE_START:f64 = 1000000.0;
+const FADE_DISTANCE_END:f64 = 2000000.0;
+const SPECULAR_REFLECTION_CONSTANT:f64 = 0.5; //TODO: should (also) be per material, not (only) global
+const DIFFUSE_REFLECTION_CONSTANT:f64 = 0.1; //TODO: should (also) be per material, not (only) global
+const AMBIENT_REFLECTION_CONSTANT:f64 = 0.1; //TODO: should (also) be per material, not (only) global
+const MATERIAL_SHININESS_CONSTANT:f64 = 1.5; //TODO: should (also) be per material, not (only) global
+const COLOR_MODE:ColorMode = ColorMode::Light;
 
 
-
+#[allow(dead_code)]
 enum ColorMode {
-    STATIC_COLOR,
-    NORMALS,
-    LIGHT
+    StaticColor,
+    Normals,
+    Light
 }
 
 
@@ -46,34 +46,60 @@ const PIX_X_Y_RATIO_IS_SANE:bool = PIX_SIZE_X - PIX_SIZE_Y < 0.001 && PIX_SIZE_X
 const _: () = check_viewport_is_sane();
 
 
-const COLOR_BLACK:Color = Color {r: 0.0, g: 0.0, b: 0.0};
-const COLOR_RED:Color = Color {r: 255.0, g: 0.0, b: 0.0};
-const COLOR_GREEN:Color = Color {r: 0.0, g: 255.0, b: 0.0};
-const COLOR_BLUE:Color = Color {r: 0.0, g: 0.0, b: 255.0};
-const COLOR_PURPLE:Color = Color {r: 255.0, g: 0.0, b: 255.0};
-const COLOR_YELLOW:Color = Color {r: 255.0, g: 255.0, b: 0.0};
-const COLOR_GRAY:Color = Color {r: 120.0, g: 120.0, b: 120.0};
-const COLOR_BROWN:Color = Color {r: 139.0, g: 69.0, b: 19.0};
-const COLOR_WHITE:Color = Color {r: 255.0, g: 255.0, b: 255.0};
+#[allow(dead_code)] const COLOR_BLACK:Color = Color {r: 0.0, g: 0.0, b: 0.0};
+#[allow(dead_code)] const COLOR_RED:Color = Color {r: 255.0, g: 0.0, b: 0.0};
+#[allow(dead_code)] const COLOR_GREEN:Color = Color {r: 0.0, g: 255.0, b: 0.0};
+#[allow(dead_code)] const COLOR_BLUE:Color = Color {r: 0.0, g: 0.0, b: 255.0};
+#[allow(dead_code)] const COLOR_PURPLE:Color = Color {r: 255.0, g: 0.0, b: 255.0};
+#[allow(dead_code)] const COLOR_YELLOW:Color = Color {r: 255.0, g: 255.0, b: 0.0};
+#[allow(dead_code)] const COLOR_GRAY:Color = Color {r: 120.0, g: 120.0, b: 120.0};
+#[allow(dead_code)] const COLOR_BROWN:Color = Color {r: 139.0, g: 69.0, b: 19.0};
+#[allow(dead_code)] const COLOR_WHITE:Color = Color {r: 255.0, g: 255.0, b: 255.0};
 
 
 trait Intersectable {
     fn intersect(&self, ray: &Ray) -> Option<Hit>;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Color {
     r: f64,
     g: f64,
     b: f64,
 }
 
-fn color_as_v3(color: &Color) -> V3 {
-    return V3 { x: color.r, y: color.g, z: color.b }
+trait ColorMath {
+    fn add(&self, other: &Color) -> Color;
+    fn subtract(&self, other: &Color) -> Color;
+    fn multiply(&self, amount: f64) -> Color;
+    fn relative_element_wise_multiply(&self, other: &Color) -> Color; //TODO: how is this operator properly called?
+    fn lerp(&self, other: &Color, ratio: f64) -> Color;
 }
 
-fn v3_as_color(vector: &V3) -> Color {
-    return Color {r: vector.x, g: vector.y, b: vector.z}
+impl ColorMath for Color {
+    fn add(&self, other: &Color) -> Color {
+        return Color { r: self.r + other.r, g: self.g + other.g, b: self.b + other.b };
+    }
+
+    fn subtract(&self, other: &Color) -> Color {
+        return Color { r: self.r - other.r, g: self.g - other.g, b: self.b - other.b };
+    }
+
+    fn multiply(&self, amount: f64) -> Color {
+        return Color { r: self.r * amount, g: self.g * amount, b: self.b * amount };
+    }
+
+    fn relative_element_wise_multiply(&self, other: &Color) -> Color {
+        //TODO: this is not correct, since we don't assume light is bounded by 255 anymore (it just gets rescaled to that before saving to a bmp)
+        let new_r = (self.r / 255.0) * other.r;
+        let new_g = (self.g / 255.0) * other.g;
+        let new_b = (self.b / 255.0) * other.b;
+        return Color { r: new_r, g: new_g, b: new_b };
+    }
+
+    fn lerp(&self, other: &Color, ratio: f64) -> Color {
+        return other.subtract(&self).multiply(ratio).add(&self);
+    }
 }
 
 type Point = V3;
@@ -99,9 +125,9 @@ struct Triangle {
 
 struct Light {
     position: Point,
-    color: Color
+    diffuse_component: Color,
+    specular_component: Color,
 }
-
 
 struct Hit {
     point: Point,
@@ -203,33 +229,72 @@ impl Intersectable for Triangle {
     }
 }
 
-fn color_blend(color1: Color, color2: Color, color2_ratio: f64) -> Color {
-    return v3_as_color(&color_as_v3(&color1).lerp(&color_as_v3(&color2), color2_ratio));
-}
-
 fn ray_through_points(start: Point, end: Point) -> Ray {
     return Ray { direction: end.subtract(&start).normalize(), origin: start }
 }
 
-fn get_color_for_hitpoint(hit: Hit) -> Color {
+fn get_color_for_hitpoint(hit: Hit, scene: &Vec<Object>) -> Color {
 
     let computed_color = match COLOR_MODE {
-        ColorMode::STATIC_COLOR => {
+        ColorMode::StaticColor => {
             COLOR_RED
         },
-        ColorMode::NORMALS => {
+        ColorMode::Normals => {
             Color {r: (hit.surface_normal.x + 1.0) * 127.5,
-                   g: (hit.surface_normal.y + 1.0)  * 127.5,
-                   b: (hit.surface_normal.z + 1.0)  * 127.5}
+                   g: (hit.surface_normal.y + 1.0) * 127.5,
+                   b: (hit.surface_normal.z + 1.0) * 127.5}
         },
-        ColorMode::LIGHT => {
-            todo!();
+        ColorMode::Light => {
+            let mut resulting_light = Color {r: 0.0, g: 0.0, b: 0.0};
+            let mut all_light_sources_summed:Color = Color { r: 0.0, g: 0.0, b: 0.0 };
+
+            for obj in scene.iter() {
+
+                match obj {
+                    Object::LightObject(light_object) => {
+
+                        //TODO: not sure if I need both specular and diffuse here?
+                        all_light_sources_summed = all_light_sources_summed.add(&light_object.diffuse_component);
+                        all_light_sources_summed = all_light_sources_summed.add(&light_object.specular_component);
+
+                        let vec_to_light_source = light_object.position.subtract(&hit.point).normalize();
+                        let l_dot_n = vec_to_light_source.dot(&hit.surface_normal);
+
+                        let diffuse_light_part = light_object.diffuse_component.multiply(DIFFUSE_REFLECTION_CONSTANT * l_dot_n);
+                        let color_before_lighting = &hit.material_color;
+
+                        let diffuse_part = diffuse_light_part.relative_element_wise_multiply(&color_before_lighting);
+
+                        let v_to_camera = CAMERA_POSITION.subtract(&hit.point).normalize();
+                        let reflected_ray_direction = hit.surface_normal.multiply(l_dot_n * 2.0).subtract(&vec_to_light_source).normalize();
+                        let r_dot_v = reflected_ray_direction.dot(&v_to_camera);
+
+                        resulting_light = resulting_light.add(&diffuse_part);
+
+                        if r_dot_v > 0.0 {
+                            let specular_part = light_object.specular_component.multiply((SPECULAR_REFLECTION_CONSTANT * r_dot_v).powf(MATERIAL_SHININESS_CONSTANT));
+                            resulting_light = resulting_light.add(&specular_part);
+                        }
+
+                        //TODO: do I somehow need to scale the light with the number of lights? (not generally, but maybe some overal light scaling to make tuning easier)
+                            //and I need to be able to set (or automatically determine) the sensitivity of the camera (i.e. how we map back to 0-255 for colors)
+
+                    },
+                    _ => {}
+                }
+
+            }
+
+            let ambient_part = hit.material_color.multiply(AMBIENT_REFLECTION_CONSTANT);
+            resulting_light = resulting_light.add(&ambient_part);
+
+            resulting_light
         }
     };
 
     let result_color = if hit.distance > FADE_DISTANCE_START {
-        color_blend(computed_color, COLOR_BLACK,
-                    clamp((hit.distance - FADE_DISTANCE_START) / (FADE_DISTANCE_END - FADE_DISTANCE_START), 0.0, 1.0))
+        let ratio = clamp((hit.distance - FADE_DISTANCE_START) / (FADE_DISTANCE_END - FADE_DISTANCE_START), 0.0, 1.0);
+        computed_color.lerp(&COLOR_BLACK, ratio)
     } else {
         computed_color
     };
@@ -261,7 +326,7 @@ fn send_ray(scene: &Vec<Object>, ray: &Ray) -> Color {
     }
 
     return match closest_hit {
-        Some(hit) => get_color_for_hitpoint(hit),
+        Some(hit) => get_color_for_hitpoint(hit, &scene),
         _ =>  COLOR_BLACK
     };
 }
@@ -290,7 +355,9 @@ fn main() {
                                          p3: Point {x: -15.0, y: 15.0, z: 150.0}, color: COLOR_BROWN}),
 
 
-        Object::LightObject(Light {color: COLOR_WHITE, position: Point { x: 30.0, y: 30.0, z: 0.0 }}),
+        Object::LightObject(Light {position: Point { x: -100.0, y: -100.0, z: 0.0 },
+                                   diffuse_component: Color {r: 255.0, g: 255.0, b: 255.0},
+                                   specular_component: Color {r: 255.0, g: 255.0, b: 255.0}}),
     ];
 
 

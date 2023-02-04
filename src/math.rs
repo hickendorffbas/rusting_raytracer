@@ -19,7 +19,7 @@ pub fn clamp(value:f64, min:f64, max:f64) -> f64 {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct V3 {
     pub x: f64,
     pub y: f64,
@@ -34,7 +34,7 @@ pub trait VectorMath {
     fn cross(&self, other: &V3) -> V3;
     fn length(&self) -> f64;
     fn normalize(&self) -> V3;
-    fn lerp(&self, other: &V3, percentage: f64) -> V3;
+    fn lerp(&self, other: &V3, ratio: f64) -> V3;
 }
 
 impl VectorMath for V3 {
