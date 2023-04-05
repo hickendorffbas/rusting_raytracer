@@ -278,8 +278,10 @@ fn get_color_for_hitpoint(hit: Hit, scene: &Vec<Object>) -> Color {
                             resulting_light = resulting_light.add(&specular_part);
                         }
 
-                        //TODO: do I somehow need to scale the light with the number of lights? (not generally, but maybe some overal light scaling to make tuning easier)
-                            //and I need to be able to set (or automatically determine) the sensitivity of the camera (i.e. how we map back to 0-255 for colors)
+                        //TODO: we should just accumulate all the light we encounter (don't limit by 255), and then scale into the 0-255 when saving to BMP, based on sensitivity
+                        //      of the camera. It is possible (also in reality) that we have 300 and 400 light somewhere, and both will show as 255 in the image. But it is also
+                        //      possible they map to 30 and 40, this should be a setting (camera sensitivity)
+                        //      note that we could have a camera that auto-adjusts to the amount of light, but that should be a setting after all light has been collected
 
                     },
                     _ => {}
@@ -336,6 +338,8 @@ fn send_ray(scene: &Vec<Object>, ray: &Ray) -> Color {
 
 fn render(filename: &str) {
     let progress_print_interval = if IMG_WIDTH_PX > 1000 { 100 } else { 10 };
+
+    //TODO: we should read the scene from a file
 
     let mut scene:Vec<Object> = vec![
         //Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 150.0 }, radius: 5.0, color: COLOR_GREEN }),
