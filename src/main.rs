@@ -1,6 +1,7 @@
 use std::vec;
 
 use image::{DynamicImage, Rgba, GenericImage};
+use rand::{thread_rng, Rng};
 
 mod math;
 use math::{V3, VectorMath, clamp, max, min};
@@ -8,8 +9,8 @@ use math::{V3, VectorMath, clamp, max, min};
 
 //Settings:
 //TODO: I think we need a scene struct and output settings struct or something like that to organise this better.
-const IMG_WIDTH_PX:u32 = 2500;
-const IMG_HEIGHT_PX:u32 = 2500;
+const IMG_WIDTH_PX:u32 = 5000;
+const IMG_HEIGHT_PX:u32 = 5000;
 const FOCAL_LENGTH:f64 = 10.0;
 const CAMERA_POSITION:Point = Point { x: 0.0, y: 0.0, z: -FOCAL_LENGTH };
 const VIEW_PORT_WIDTH:f64 = 4.0; 
@@ -136,6 +137,7 @@ struct Hit {
     surface_normal: Direction,
 }
 
+#[allow(dead_code)]
 enum Object {
     SphereObject(Sphere),
     TriangleObject(Triangle),
@@ -332,34 +334,46 @@ fn send_ray(scene: &Vec<Object>, ray: &Ray) -> Color {
 }
 
 
-fn main() {
+fn render(filename: &str) {
     let progress_print_interval = if IMG_WIDTH_PX > 1000 { 100 } else { 10 };
 
-    let scene:Vec<Object> = vec![
-        Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 150.0 }, radius: 5.0, color: COLOR_GREEN }),
-        Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 180.0 }, radius: 5.0, color: COLOR_RED }),
-        Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 210.0 }, radius: 5.0, color: COLOR_GREEN }),
-        Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 240.0 }, radius: 5.0, color: COLOR_RED }),
-        Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 270.0 }, radius: 5.0, color: COLOR_GREEN }),
+    let mut scene:Vec<Object> = vec![
+        //Object::SphereObject(Sphere { center: Point { x: 15.0, y: 15.0, z: 150.0 }, radius: 5.0, color: COLOR_GREEN }),
 
-        Object::TriangleObject(Triangle {p1: Point {x: -10.0, y: -15.0, z: 151.0},
-                                         p2: Point {x: -15.0, y: -15.0, z: 150.0},
-                                         p3: Point {x: -15.0, y: -10.0, z: 150.0}, color: COLOR_BROWN}),
-
-        Object::TriangleObject(Triangle {p1: Point {x: -10.0, y: 0.0, z: 150.0},
-                                         p2: Point {x: -15.0, y: 0.0, z: 250.0},
-                                         p3: Point {x: -15.0, y: 5.0, z: 250.0}, color: COLOR_BROWN}),
-
-        Object::TriangleObject(Triangle {p1: Point {x: -10.0, y: 10.0, z: 150.0},
-                                         p2: Point {x: -15.0, y: 10.0, z: 151.0},
-                                         p3: Point {x: -15.0, y: 15.0, z: 150.0}, color: COLOR_BROWN}),
-
+        //Object::TriangleObject(Triangle {p1: Point {x: -10.0, y: -15.0, z: 151.0},
+        //                                 p2: Point {x: -15.0, y: -15.0, z: 150.0},
+        //                                 p3: Point {x: -15.0, y: -10.0, z: 150.0}, color: COLOR_BROWN}),
 
         Object::LightObject(Light {position: Point { x: -100.0, y: -100.0, z: 0.0 },
                                    diffuse_component: Color {r: 255.0, g: 255.0, b: 255.0},
                                    specular_component: Color {r: 255.0, g: 255.0, b: 255.0}}),
+
+
+        Object::LightObject(Light {position: Point { x: -80.0, y: 60.0, z: -30.0 },
+                                   diffuse_component: Color {r: 100.0, g: 100.0, b: 100.0},
+                                   specular_component: Color {r: 100.0, g: 100.0, b: 100.0}}),
     ];
 
+
+    let mut rng = thread_rng();
+    for _ in 1..100 {
+
+        let x: f64 = rng.gen_range(-40.0..40.0);
+        let y: f64 = rng.gen_range(-40.0..40.0);
+        let z: f64 = rng.gen_range(50.0..150.0);
+        let radius: f64 = rng.gen_range(1.0..6.0);
+
+
+        let r: f64 = rng.gen_range(0.0..255.0);
+        let g: f64 = rng.gen_range(0.0..255.0);
+        let b: f64 = rng.gen_range(0.0..255.0);
+        let color = Color {r, g, b};
+
+        scene.push(
+            Object::SphereObject(Sphere {center: Point{x, y, z}, radius, color})
+        )
+
+    }
 
     let mut img = DynamicImage::new_rgb8(IMG_WIDTH_PX, IMG_HEIGHT_PX);
 
@@ -384,7 +398,13 @@ fn main() {
         } 
     }
 
+    img.save(filename).unwrap();
+}
 
-    //TODO: check which files are present already, and add a suffix
-    img.save("image.bmp").unwrap();
+fn main() {
+    for img_idx in 21..30 {
+        let filename = format!("image_{}.bmp", img_idx);
+        render(&filename);
+    }
+
 }
